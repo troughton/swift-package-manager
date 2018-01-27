@@ -224,7 +224,11 @@ public final class ClangTargetDescription {
     private var optimizationArguments: [String] {
         switch buildParameters.configuration {
         case .debug:
-            return ["-g", "-O0"]
+            if buildParameters.triple.isWindows() {
+                return ["-Z7", "-O0"]
+            } else {
+                return ["-g", "-O0"]
+            }
         case .release:
             return ["-O2"]
         }
@@ -321,7 +325,11 @@ public final class SwiftTargetDescription {
     private var optimizationArguments: [String] {
         switch buildParameters.configuration {
         case .debug:
-            return ["-Onone", "-g", "-enable-testing"]
+            // if buildParameters.triple.isWindows() {
+            //     return ["-Onone", "-enable-testing"]
+            // } else {
+                return ["-Onone", "-g", "-enable-testing"]
+            // }
         case .release:
             return ["-O"]
         }
@@ -353,7 +361,11 @@ public final class ProductBuildDescription {
 
         switch product.type {
         case .executable:
-            return RelativePath(name)
+            if buildParameters.triple.isWindows() {
+                return RelativePath("\(name).exe")
+            } else {
+                return RelativePath(name)
+            }
         case .library(.static):
             return RelativePath("lib\(name).a")
         case .library(.dynamic):
@@ -406,7 +418,11 @@ public final class ProductBuildDescription {
         args += additionalFlags
 
         if buildParameters.configuration == .debug {
-            args += ["-g"]
+            if buildParameters.triple.isWindows() {
+                args += ["-Xlinker","-debug"]
+            } else {
+                args += ["-g"]
+            }
         }
         args += ["-L", buildParameters.buildPath.asString]
         args += ["-o", binary.asString]
@@ -441,7 +457,9 @@ public final class ProductBuildDescription {
       #if os(Linux)
         // On linux, set rpath such that dynamic libraries are looked up
         // adjacent to the product. This happens by default on macOS.
-        args += ["-Xlinker", "-rpath=$ORIGIN"]
+        if buildParameters.triple.isLinux() {
+            args += ["-Xlinker", "-rpath=$ORIGIN"]
+        }
       #endif
         args += objects.map({ $0.asString })
 
