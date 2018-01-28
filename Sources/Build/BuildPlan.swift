@@ -225,7 +225,7 @@ public final class ClangTargetDescription {
         switch buildParameters.configuration {
         case .debug:
             if buildParameters.triple.isWindows() {
-                return ["-Z7", "-O0"]
+                return ["-g", "-gcodeview", "-O0"]
             } else {
                 return ["-g", "-O0"]
             }
