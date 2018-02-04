@@ -205,7 +205,10 @@ public final class ClangTargetDescription {
         args += ["-fobjc-arc"]
       #endif
         args += ["-fblocks"]
-        args += ["-fmodules", "-fmodule-name=" + target.c99name]
+
+        if !buildParameters.triple.isWindows() {
+            args += ["-fmodules", "-fmodule-name=" + target.c99name]
+        }
         args += ["-I", clangTarget.includeDir.asString]
         args += additionalFlags
         args += moduleCacheArgs
