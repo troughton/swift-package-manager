@@ -1620,6 +1620,124 @@ final class WorkspaceTests: XCTestCase {
         }
     }
 
+    func testResolutionFailureWithEditedDependency() throws {
+        let sandbox = AbsolutePath("/tmp/ws/")
+        let fs = InMemoryFileSystem()
+
+        let workspace = try TestWorkspace(
+            sandbox: sandbox,
+            fs: fs,
+            roots: [
+                TestPackage(
+                    name: "Root",
+                    targets: [
+                        TestTarget(name: "Root", dependencies: ["Foo"]),
+                    ],
+                    products: [],
+                    dependencies: [
+                        TestDependency(name: "Foo", requirement: .upToNextMajor(from: "1.0.0")),
+                    ]
+                ),
+            ],
+            packages: [
+                TestPackage(
+                    name: "Foo",
+                    targets: [
+                        TestTarget(name: "Foo"),
+                    ],
+                    products: [
+                        TestProduct(name: "Foo", targets: ["Foo"]),
+                    ],
+                    versions: ["1.0.0", nil]
+                ),
+                TestPackage(
+                    name: "Bar",
+                    targets: [
+                        TestTarget(name: "Bar"),
+                    ],
+                    products: [
+                        TestProduct(name: "Bar", targets: ["Bar"]),
+                    ],
+                    versions: ["1.0.0", nil]
+                ),
+            ]
+        )
+
+        // Load the graph.
+        workspace.checkPackageGraph(roots: ["Root"]) { (graph, diagnostics) in
+            PackageGraphTester(graph) { result in
+                result.check(roots: "Root")
+                result.check(packages: "Foo", "Root")
+            }
+            XCTAssertNoDiagnostics(diagnostics)
+        }
+        workspace.checkEdit(packageName: "Foo") { diagnostics in
+            XCTAssertNoDiagnostics(diagnostics)
+        }
+        workspace.checkManagedDependencies { result in
+            result.check(dependency: "foo", at: .edited(nil))
+        }
+
+        // Try resolving a bad graph.
+        let deps: [TestWorkspace.PackageDependency] = [
+            .init(name: "Bar", requirement: .exact("1.1.0")),
+        ]
+        workspace.checkUpdate(roots: ["Root"], deps: deps) { diagnostics in
+            DiagnosticsEngineTester(diagnostics) { result in
+                result.check(diagnostic: .contains("/tmp/ws/pkgs/Bar @ 1.1.0"), behavior: .error)
+            }
+        }
+    }
+
+    func testSkipUpdate() throws {
+        let sandbox = AbsolutePath("/tmp/ws/")
+        let fs = InMemoryFileSystem()
+
+        let workspace = try TestWorkspace(
+            sandbox: sandbox,
+            fs: fs,
+            roots: [
+                TestPackage(
+                    name: "Root",
+                    targets: [
+                        TestTarget(name: "Root", dependencies: ["Foo"]),
+                    ],
+                    products: [
+                        TestProduct(name: "Root", targets: ["Root"]),
+                    ],
+                    dependencies: [
+                        TestDependency(name: "Foo", requirement: .upToNextMajor(from: "1.0.0")),
+                    ]
+                ),
+            ],
+            packages: [
+                TestPackage(
+                    name: "Foo",
+                    targets: [
+                        TestTarget(name: "Foo"),
+                    ],
+                    products: [
+                        TestProduct(name: "Foo", targets: ["Foo"]),
+                    ],
+                    versions: ["1.5.0"]
+                ),
+            ],
+            skipUpdate: true
+        )
+
+        // Run update and remove all events.
+        workspace.checkUpdate(roots: ["Root"]) { diagnostics in
+            XCTAssertNoDiagnostics(diagnostics)
+        }
+        workspace.delegate.events = []
+
+        // Check we don't have updating Foo event.
+        workspace.checkUpdate(roots: ["Root"]) { diagnostics in
+            XCTAssertNoDiagnostics(diagnostics)
+            XCTAssertEqual(workspace.delegate.events, ["Everything is already up-to-date"])
+        }
+    }
+
     static var allTests = [
         ("testBasics", testBasics),
         ("testCanResolveWithIncompatiblePins", testCanResolveWithIncompatiblePins),
@@ -1642,6 +1760,9 @@ final class WorkspaceTests: XCTestCase {
         ("testCanUneditRemovedDependencies", testCanUneditRemovedDependencies),
         ("testInterpreterFlags", testInterpreterFlags),
         ("testDependencyResolutionWithEdit", testDependencyResolutionWithEdit),
+        ("testChangeOneDependency", testChangeOneDependency),
+        ("testResolutionFailureWithEditedDependency", testResolutionFailureWithEditedDependency),
+        ("testSkipUpdate", testSkipUpdate),
     ]
 }
 
@@ -1711,13 +1832,15 @@ private final class TestWorkspace {
     var repoProvider: InMemoryGitRepositoryProvider
     let delegate = TestWorkspaceDelegate()
     let toolsVersion: ToolsVersion
+    let skipUpdate: Bool
 
     fileprivate init(
         sandbox: AbsolutePath,
         fs: FileSystem,
         roots: [TestPackage],
         packages: [TestPackage],
-        toolsVersion: ToolsVersion = ToolsVersion.currentToolsVersion
+        toolsVersion: ToolsVersion = ToolsVersion.currentToolsVersion,
+        skipUpdate: Bool = false
     ) throws {
         precondition(Set(roots.map({$0.name})).count == roots.count, "Root packages should be unique")
         self.sandbox = sandbox
@@ -1728,6 +1851,7 @@ private final class TestWorkspace {
         self.manifestLoader = MockManifestLoader(manifests: [:])
         self.repoProvider = InMemoryGitRepositoryProvider()
         self.toolsVersion = toolsVersion
+        self.skipUpdate = skipUpdate
 
         try create()
     }
@@ -1814,7 +1938,8 @@ private final class TestWorkspace {
             toolsVersionLoader: ToolsVersionLoader(),
             delegate: delegate,
             fileSystem: fs,
-            repositoryProvider: repoProvider
+            repositoryProvider: repoProvider,
+            skipUpdate: skipUpdate
         )
         return _workspace!
     }
